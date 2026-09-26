@@ -19,5 +19,5 @@ Las semanas van de lunes a domingo y se cuentan por **día de entrega**.
 ## Archivos
 
 - `app/pedidos.html` — código de la página (se publica como Artifact en la URL de arriba).
-- `data/menu-seed.json` — menú inicial con precios y costos, y de dónde salió cada número.
+- `data/menu-seed.json` — menú inicial con precios de venta. Los costos no están en el repo porque es público; viven solo en la base de datos privada de la página.
 - `docs/datos.md` — estructura de la base de datos, para leerla o escribirla desde Claude.

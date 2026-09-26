@@ -1,11 +1,10 @@
 {
-  "_fuente": "Precios y costos de Hogaza Natural, Hierbas, Ajo/Parm, Pan de Molde y Apple Pie: tu Excel 'Panencia — Registro de Ventas' (ago–sep 2026). El resto: precios de las últimas ventas en 'Panencia - Ganancias' y COSTO TOTAL de 'Costo unitario de productos' (ago 2026), que usa otra base de costo. Pan de muerto sin costo.",
+  "_fuente": "Precios de venta del menú. Los costos no se guardan en el repo (es público): viven solo en la base de datos privada de la página.",
   "menu": {
     "hogaza-natural": {
       "name": "Hogaza Natural",
       "category": "pan",
       "price": 85,
-      "cost": 21.36,
       "order": 1,
       "active": true,
       "aliases": [
@@ -18,7 +17,6 @@
       "name": "Hogaza Hierbas",
       "category": "pan",
       "price": 95,
-      "cost": 27.36,
       "order": 2,
       "active": true,
       "aliases": [
@@ -31,7 +29,6 @@
       "name": "Hogaza Ajo y Parmesano",
       "category": "pan",
       "price": 145,
-      "cost": 53.47,
       "order": 3,
       "active": true,
       "aliases": [
@@ -44,7 +41,6 @@
       "name": "Pan de Molde",
       "category": "pan",
       "price": 90,
-      "cost": 27.59,
       "order": 4,
       "active": true,
       "aliases": [
@@ -57,7 +53,6 @@
       "name": "Pan de Molde Ajo y Parmesano",
       "category": "pan",
       "price": 95,
-      "cost": 95.84,
       "order": 5,
       "active": true,
       "aliases": [
@@ -69,7 +64,6 @@
       "name": "Pan de Molde Hierbas",
       "category": "pan",
       "price": 95,
-      "cost": 64.03,
       "order": 6,
       "active": true,
       "aliases": [
@@ -81,7 +75,6 @@
       "name": "Apple Pie",
       "category": "postres",
       "price": 300,
-      "cost": 141.74,
       "order": 10,
       "active": true,
       "aliases": [
@@ -94,7 +87,6 @@
       "name": "Galleta Chocochips",
       "category": "postres",
       "price": 55,
-      "cost": 34.42,
       "order": 11,
       "active": true,
       "aliases": [
@@ -107,7 +99,6 @@
       "name": "Galleta Brownie",
       "category": "postres",
       "price": 55,
-      "cost": 33.93,
       "order": 12,
       "active": true,
       "aliases": [
@@ -119,7 +110,6 @@
       "name": "Galleta Pay de Limón",
       "category": "postres",
       "price": 55,
-      "cost": 30.66,
       "order": 13,
       "active": true,
       "aliases": [
@@ -131,7 +121,6 @@
       "name": "Croissant (4 pz)",
       "category": "laminados",
       "price": 150,
-      "cost": 67.75,
       "order": 20,
       "active": true,
       "aliases": [
@@ -144,7 +133,6 @@
       "name": "Chocolatín (4 pz)",
       "category": "laminados",
       "price": 180,
-      "cost": 74.05,
       "order": 21,
       "active": true,
       "aliases": [
@@ -157,7 +145,6 @@
       "name": "Pan de Muerto charola (8 ch)",
       "category": "temporada",
       "price": 300,
-      "cost": null,
       "order": 30,
       "active": true,
       "aliases": [
@@ -171,7 +158,6 @@
       "name": "Pan de Muerto grande",
       "category": "temporada",
       "price": 55,
-      "cost": null,
       "order": 31,
       "active": true,
       "aliases": [
