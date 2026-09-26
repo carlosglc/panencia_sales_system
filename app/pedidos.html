@@ -26,6 +26,8 @@
   --ok:#7CC89A; --ok-soft:#1E3526; --warn:#E6B15E; --warn-soft:#3A2C14; --info:#8FB3DC; --info-soft:#1D2B3B; --danger:#EE8F86; --danger-soft:#3D1F1C;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0}
 body{background:var(--bg);color:var(--ink);font:16px/1.45 var(--body);-webkit-text-size-adjust:100%;padding-inline:16px;padding-block:0 calc(var(--bar-h) + 96px + env(safe-area-inset-bottom,0px))}
 .wrap{max-width:640px;margin:0 auto}
 h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;letter-spacing:-.01em}
@@ -71,6 +73,7 @@ textarea{min-height:84px;resize:vertical}
 .btn.danger{color:var(--danger);border-color:var(--danger)}
 .btn.sm{min-height:34px;padding:5px 10px;font-size:.86rem}
 .btn:disabled{opacity:.5;cursor:default}
+a.btn{color:var(--ink);text-decoration:none;display:inline-flex;align-items:center}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:.88rem;min-height:36px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -372,7 +375,7 @@ details[open] summary::after{content:"–"}
     return e;
   }
   async function write(fn, okMsg) {
-    if (!S.db) { toast("Sin conexión a los datos. Abre la página desde Claude."); return false; }
+    if (!S.db) { toast("Sin conexión a los datos. Recarga la página."); return false; }
     try { await fn(); if (okMsg) toast(okMsg); return true; }
     catch (e) {
       const code = e && e.code;
@@ -790,6 +793,37 @@ Responde solo con JSON de esta forma: {"items":[{"id":"<id del menú>","qty":<en
   $("#add-prod").addEventListener("click", addProduct);
   $("#pay-note").addEventListener("change", ev => write(() => S.db.doc("config/app").set({ ...S.config, paymentNote: ev.target.value.trim() }), "Mensaje de pago guardado"));
 
+
+  // ---------- local mode (page opened outside Claude: data stays in this browser) ----------
+  const LOCAL_SEED = {"menu": {"hogaza-natural": {"name": "Hogaza Natural", "category": "pan", "price": 85, "cost": 21.36, "order": 1, "active": true, "aliases": ["hogaza sola", "hogaza clasica", "hogaza normal"]}, "hogaza-hierbas": {"name": "Hogaza Hierbas", "category": "pan", "price": 95, "cost": 27.36, "order": 2, "active": true, "aliases": ["hogaza de hierbas", "hogaza hierbas italianas", "hierbas finas"]}, "hogaza-ajo-parm": {"name": "Hogaza Ajo y Parmesano", "category": "pan", "price": 145, "cost": 53.47, "order": 3, "active": true, "aliases": ["hogaza ajo parm", "hogaza de ajo", "hogaza parmesano"]}, "molde-honey": {"name": "Pan de Molde", "category": "pan", "price": 90, "cost": 27.59, "order": 4, "active": true, "aliases": ["pan de caja", "pan molde miel", "honey"]}, "molde-ajo-parm": {"name": "Pan de Molde Ajo y Parmesano", "category": "pan", "price": 95, "cost": 95.84, "order": 5, "active": true, "aliases": ["pan de caja ajo", "molde ajo parm"]}, "molde-hierbas": {"name": "Pan de Molde Hierbas", "category": "pan", "price": 95, "cost": 64.03, "order": 6, "active": true, "aliases": ["pan de caja hierbas", "molde hierbas italianas"]}, "apple-pie": {"name": "Apple Pie", "category": "postres", "price": 300, "cost": 141.74, "order": 10, "active": true, "aliases": ["pay de manzana", "pie de manzana", "pay manzana"]}, "galleta-chocochips": {"name": "Galleta Chocochips", "category": "postres", "price": 55, "cost": 34.42, "order": 11, "active": true, "aliases": ["galleta chocochip", "galleta chispas", "galleta de chocolate"]}, "galleta-brownie": {"name": "Galleta Brownie", "category": "postres", "price": 55, "cost": 33.93, "order": 12, "active": true, "aliases": ["chocobrownie", "galleta chocobrownie"]}, "galleta-limon": {"name": "Galleta Pay de Limón", "category": "postres", "price": 55, "cost": 30.66, "order": 13, "active": true, "aliases": ["galleta limon", "galleta de limon"]}, "croissant-4": {"name": "Croissant (4 pz)", "category": "laminados", "price": 150, "cost": 67.75, "order": 20, "active": true, "aliases": ["croissant", "cruasan"], "unit": "caja de 4"}, "chocolatin-4": {"name": "Chocolatín (4 pz)", "category": "laminados", "price": 180, "cost": 74.05, "order": 21, "active": true, "aliases": ["chocolatin", "pain au chocolat"], "unit": "caja de 4"}, "pan-muerto-charola-8": {"name": "Pan de Muerto charola (8 ch)", "category": "temporada", "price": 300, "cost": null, "order": 30, "active": true, "aliases": ["charola pan de muerto", "pan de muerto chico", "pan de muerto charola"], "unit": "8 chicos"}, "pan-muerto-grande": {"name": "Pan de Muerto grande", "category": "temporada", "price": 55, "cost": null, "order": 31, "active": true, "aliases": ["pan de muerto grande", "pan de muerto"]}}, "config": {"paymentNote": ""}};
+  function localDB() {
+    const KEY = "panencia.datos.v1";
+    let data = {};
+    try { data = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch {}
+    if (!Object.keys(data).some(k => k.startsWith("menu/"))) {
+      for (const [id, d] of Object.entries(LOCAL_SEED.menu)) data["menu/" + id] = d;
+      data["config/app"] = LOCAL_SEED.config;
+    }
+    const listeners = new Set();
+    const clone = x => JSON.parse(JSON.stringify(x));
+    const save = () => { try { localStorage.setItem(KEY, JSON.stringify(data)); } catch {} listeners.forEach(fn => fn()); };
+    const snap = path => ({ id: path.split("/").pop(), exists: path in data, data: () => data[path] });
+    const watch = fn => { listeners.add(fn); fn(); return () => listeners.delete(fn); };
+    return {
+      doc: path => ({
+        set: async d => { data[path] = clone(d); save(); },
+        update: async d => { if (!(path in data)) throw { code: "invalid_argument" }; data[path] = { ...data[path], ...clone(d) }; save(); },
+        delete: async () => { delete data[path]; save(); },
+        onSnapshot: next => watch(() => next(snap(path))),
+      }),
+      collection: name => {
+        const q = { orderBy: () => q, limit: () => q,
+          onSnapshot: next => watch(() => next({ docs: Object.keys(data).filter(k => k.startsWith(name + "/") && k.split("/").length === 2).map(snap) })) };
+        return q;
+      },
+    };
+  }
+
   // ---------- boot ----------
   resetForm();
   try { const t = localStorage.getItem("panencia.tab"); if (t && t !== "nuevo" && $(`[data-view="${t}"]`)) showTab(t); } catch {}
@@ -797,10 +831,10 @@ Responde solo con JSON de esta forma: {"items":[{"id":"<id del menú>","qty":<en
 
   (async () => {
     const c = window.claude;
-    if (!c || !c.use) { setConn("Solo lectura", "bad"); renderAll(); return; }
-    const db = await c.use("db");
+    const local = !c || !c.use;
+    const db = local ? localDB() : await c.use("db");
     if (!db) { setConn("Sin datos", "bad"); $("#menu-status").textContent = ""; renderAll(); return; }
-    S.db = db; setConn("Sincronizado", "ok");
+    S.db = db; setConn(local ? "En este navegador" : "Sincronizado", "ok");
     db.collection("menu").onSnapshot(snap => { S.menu = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderAll(); }, onErr);
     db.collection("orders").orderBy("deliveryDate", "desc").limit(1000).onSnapshot(snap => { S.orders = snap.docs.map(d => ({ id: d.id, ...d.data() })); renderCustomers(); renderAll(); }, onErr);
     db.doc("config/app").onSnapshot(snap => { S.config = snap.exists ? { ...snap.data() } : {}; if (S.tab === "menu") renderMenuEditor(); }, onErr);
