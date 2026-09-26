@@ -27,11 +27,13 @@ erDiagram
 | `users` | Personas que entran al panel | `email` único sin distinguir mayúsculas, `role` (`admin` o `staff`), `password_hash`, `disabled` |
 | `sessions` | Sesiones abiertas | `id` = SHA-256 del token de la cookie (el token nunca se guarda), `expires_at` |
 | `login_attempts` | Intentos fallidos por `correo\|ip` | `fails`, `first_at` |
-| `products` | El menú | `id` legible (`hogaza-natural`), `price_cents`, `cost_cents` (puede ser nulo), `aliases` (JSON), `active`, `sort` |
+| `products` | El menú | `id` legible (`hogaza-natural`), `price_cents`, `cost_cents` (puede ser nulo), `aliases` (JSON), `active`, `sort`, `wa_retailer_id` (id en el catálogo de WhatsApp) |
 | `customers` | Clientes | `name` único sin distinguir mayúsculas, `phone`, `notes` |
-| `orders` | Pedidos | `code` (folio), `customer_id`, `delivery_date`, montos en centavos, `paid`/`payment_method`/`paid_at`, `delivered`/`delivered_at`, `source` (`panel` o `excel`), `created_by` |
+| `orders` | Pedidos | `code` (folio), `customer_id`, `delivery_date`, montos en centavos, `paid`/`payment_method`/`paid_at`, `delivered`/`delivered_at`, `source` (`panel`, `whatsapp` o `excel`), `created_by` (nulo si lo creó el menú de WhatsApp) |
 | `order_items` | Renglones de cada pedido | `product_id`, `name`, `qty`, `price_cents`, `cost_cents` |
-| `settings` | Ajustes clave-valor | `payment_note` |
+| `settings` | Ajustes clave-valor | `payment_note`, `wa_menu` (`1`/`0`), `delivery_days` (`0,1,…,6`, 0 = domingo) |
+| `wa_messages` | Mensajes de WhatsApp recibidos | `id` = wamid de Meta (evita duplicados), `from_phone`, `type` (`text`, `order`, `respuesta`, `otro`), `items` (JSON del carrito), `status` (`nuevo` en Bandeja, `pedido`, `descartado`, `menu` si lo atendió el menú), `order_id` |
+| `wa_sessions` | Conversaciones en curso con el menú de WhatsApp | `phone`, `step`, `data` (carrito, sección, día), vence a las 2 h |
 | `audit_log` | Bitácora | `at`, `user_id`, `action`, `entity`, `entity_id`, `detail` (JSON) |
 
 ## Cambiar el esquema
@@ -39,7 +41,7 @@ erDiagram
 Nunca edites una migración que ya se aplicó. Crea una nueva con el siguiente número:
 
 ```sh
-npx wrangler d1 migrations create panencia descripcion-corta   # crea migrations/0003_descripcion-corta.sql
+npx wrangler d1 migrations create panencia descripcion-corta   # crea migrations/0004_descripcion-corta.sql
 # escribe el SQL (ALTER TABLE …, CREATE INDEX …)
 npm run db:migrate:local      # pruébala en local
 npm test

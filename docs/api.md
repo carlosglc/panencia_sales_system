@@ -108,10 +108,22 @@ Un pedido se devuelve así:
 
 | Método | Ruta | Qué hace |
 |---|---|---|
-| GET | `/api/settings` | `{settings: {payment_note}}`. |
-| PUT | `/api/settings` | **admin.** `{payment_note}`: el texto que va al final del mensaje de cada pedido por cobrar. |
+| GET | `/api/settings` | `{settings: {payment_note, wa_menu, delivery_days}}`. |
+| PUT | `/api/settings` | **admin.** Cualquiera de: `payment_note` (texto al final de cada pedido por cobrar), `wa_menu` (`true`/`false`, enciende el menú de WhatsApp), `delivery_days` (lista de 0 = domingo a 6 = sábado). |
 | GET | `/api/users` | **admin.** Usuarios con su último acceso. |
 | POST | `/api/users` | **admin.** `{email, name, role, password}`. |
 | PATCH | `/api/users/:id` | **admin.** `{name?, role?, disabled?, password?}`. No puedes cambiar tu propio rol ni desactivarte. Desactivar o cambiar la contraseña cierra las sesiones de esa persona. |
 | GET | `/api/audit?limit=100` | **admin.** Bitácora, lo más reciente primero (máximo 500). |
 | GET | `/api/export` | **admin.** Respaldo JSON de productos, clientes, pedidos, renglones y ajustes. No incluye usuarios ni contraseñas. |
+
+## WhatsApp
+
+Ver [whatsapp.md](whatsapp.md) para configurarlo.
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET | `/api/whatsapp/webhook` | **Sin sesión.** Verificación de Meta: responde `hub.challenge` si `hub.verify_token` coincide con `WA_VERIFY_TOKEN`. |
+| POST | `/api/whatsapp/webhook` | **Sin sesión, firmado.** Mensajes entrantes. Exige `X-Hub-Signature-256` válida con `WA_APP_SECRET` (si no, `401`). Guarda cada mensaje una vez; si el menú está encendido, lo atiende y contesta. |
+| GET | `/api/whatsapp/inbox` | Mensajes pendientes agrupados por número, con el cliente reconocido por teléfono, y `status: {receiving, sending}`. |
+| POST | `/api/whatsapp/resolve` | `{ids, status: "pedido" \| "descartado", order_id?}`. Saca mensajes de la Bandeja. |
+| POST | `/api/whatsapp/send` | `{phone, text}`. Manda texto por la API; solo a números que escribieron en las últimas 24 h (si no, `409`). |

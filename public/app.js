@@ -53,6 +53,7 @@
     usuarios: '<rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
     actividad: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
     cuenta: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/>',
+    whatsapp: '<path d="M4 20l1.4-4.1A8 8 0 1 1 8.3 19z"/><path d="M9 10.5h6M9 13.5h4"/>',
     mas: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   };
   const icon = name => { const s = el("span", { class: "ic", "aria-hidden": "true" }); s.innerHTML = `<svg viewBox="0 0 24 24">${ICONS[name]}</svg>`; return s; };
@@ -134,7 +135,7 @@
 
   // ================= estructura =================
   const NAV = [
-    ["nuevo", "Nuevo pedido"], ["resumen", "Resumen"], ["pedidos", "Pedidos"], ["clientes", "Clientes"],
+    ["nuevo", "Nuevo pedido"], ["resumen", "Resumen"], ["pedidos", "Pedidos"], ["whatsapp", "Bandeja"], ["clientes", "Clientes"],
     ["menu", "Menú y costos"], ["usuarios", "Usuarios", true], ["actividad", "Actividad", true], ["cuenta", "Mi cuenta"],
   ];
   function renderShell() {
@@ -142,14 +143,16 @@
     const side = el("aside", { class: "side" },
       brand(),
       el("nav", { "aria-label": "Secciones" }, NAV.filter(n => !n[2] || isAdmin()).map(([id, label]) =>
-        el("a", { class: "navlink" + (id === "nuevo" ? " new" : ""), href: "#/" + id, "data-nav": id }, icon(id), label))),
+        el("a", { class: "navlink" + (id === "nuevo" ? " new" : ""), href: "#/" + id, "data-nav": id }, icon(id), label,
+          id === "whatsapp" ? el("span", { class: "badge", "data-badge": "wa", hidden: true }) : null))),
       el("div", { class: "who" }, el("b", { text: S.me.name }), el("span", { class: "muted small", text: S.me.role === "admin" ? "Administración" : "Pedidos" }),
         el("button", { class: "btn sm ghost", type: "button", text: "Cerrar sesión", onclick: logout })));
     const top = el("header", { class: "topbar" }, brand());
     const main = el("main", { class: "main", id: "main" });
     const bottom = el("nav", { class: "bottomnav", "aria-label": "Secciones" },
-      [["resumen", "Resumen"], ["pedidos", "Pedidos"], ["nuevo", "Nuevo"], ["clientes", "Clientes"], ["mas", "Más"]].map(([id, label]) =>
-        el("a", { href: "#/" + id, "data-nav": id, class: id === "nuevo" ? "plus" : null }, icon(id), label)));
+      [["resumen", "Resumen"], ["pedidos", "Pedidos"], ["nuevo", "Nuevo"], ["whatsapp", "Bandeja"], ["mas", "Más"]].map(([id, label]) =>
+        el("a", { href: "#/" + id, "data-nav": id, class: id === "nuevo" ? "plus" : null }, icon(id), label,
+          id === "whatsapp" ? el("span", { class: "badge", "data-badge": "wa", hidden: true }) : null)));
     root.append(el("div", { class: "shell" }, side, el("div", {}, top, main)), bottom);
   }
   async function logout() {
@@ -161,13 +164,13 @@
   let renderSeq = 0;
   const ROUTES = {
     resumen: viewResumen, pedidos: viewPedidos, nuevo: viewNuevo, pedido: viewNuevo, clientes: viewClientes, cliente: viewCliente,
-    menu: viewMenu, usuarios: viewUsuarios, actividad: viewActividad, cuenta: viewCuenta, mas: viewMas,
+    menu: viewMenu, usuarios: viewUsuarios, actividad: viewActividad, cuenta: viewCuenta, mas: viewMas, whatsapp: viewBandeja,
   };
   async function route() {
     if (!S.me) return;
     const [name, arg] = (location.hash.replace(/^#\/?/, "") || "resumen").split("/");
     const fn = ROUTES[name] || viewResumen;
-    const nav = { pedido: "pedidos", cliente: "clientes", menu: "mas", usuarios: "mas", actividad: "mas", cuenta: "mas" };
+    const nav = { pedido: "pedidos", cliente: "mas", clientes: "mas", menu: "mas", usuarios: "mas", actividad: "mas", cuenta: "mas" };
     document.querySelectorAll("[data-nav]").forEach(a => {
       const on = a.dataset.nav === name || (a.closest(".bottomnav") && a.dataset.nav === nav[name]) || (a.closest(".side") && name === "pedido" && a.dataset.nav === "pedidos") || (a.closest(".side") && name === "cliente" && a.dataset.nav === "clientes");
       if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
@@ -395,6 +398,7 @@
       el("div", { class: "row" },
         el("span", { class: "pill " + (o.paid ? "paid" : "pend"), text: o.paid ? "Pagado · " + o.payment_method : "Por cobrar" }),
         o.delivered ? el("span", { class: "pill done", text: "Entregado" }) : null,
+        o.source === "whatsapp" ? el("span", { class: "pill off", text: "WhatsApp" }) : null,
         el("span", { class: "small muted mono", text: o.code + " · " + dayShort(o.delivery_date) })),
       acts, confirm, msgBox].filter(Boolean));
     return card;
@@ -402,7 +406,8 @@
 
   // ================= NUEVO / EDITAR PEDIDO =================
   function emptyForm() {
-    return { id: null, code: null, customer: "", phone: "", qty: {}, prices: {}, delivery: ymd(addDays(today(), 1)), shipping: "", discount: "", pay: "", notes: "", raw: "", saved: null };
+    return { id: null, code: null, customer: "", phone: "", qty: {}, prices: {}, delivery: ymd(addDays(today(), 1)), shipping: "", discount: "", pay: "", notes: "", raw: "", saved: null,
+      source: "panel", waIds: [], waPhone: null, note: "" };
   }
   async function viewNuevo(id) {
     const [, , { customers }, order] = await Promise.all([
@@ -505,10 +510,10 @@
     // pegar mensaje
     const paste = el("textarea", { id: "f-paste", placeholder: "Hola! me apartas 2 hogazas de hierbas y 4 galletas chocochips para el sábado?", value: F.raw });
     paste.addEventListener("input", () => (F.raw = paste.value));
-    const parseNote = el("p", { class: "note small", hidden: true });
-    const pasteCard = el("details", { class: "card" },
-      el("summary", { text: "Pegar mensaje del cliente" }),
-      el("p", { class: "muted small", text: "Pega el mensaje como te llegó y lo convierto en pedido para que lo revises." }),
+    const parseNote = el("p", { class: "note small", hidden: !F.note, text: F.note });
+    const pasteCard = el("details", { class: "card", open: F.source === "whatsapp" },
+      el("summary", { text: F.source === "whatsapp" ? "Mensajes de WhatsApp" : "Pegar mensaje del cliente" }),
+      el("p", { class: "muted small", text: F.source === "whatsapp" ? "Esto escribió por WhatsApp. Si corriges el texto, vuelve a convertirlo." : "Pega el mensaje como te llegó y lo convierto en pedido para que lo revises." }),
       paste,
       el("div", {}, el("button", { class: "btn", type: "button", text: "Convertir en pedido", onclick: () => {
         if (!paste.value.trim()) return toast("Pega primero el mensaje");
@@ -544,11 +549,15 @@
         customer: { name: F.customer.trim(), phone: F.phone.trim() },
         items: t.items.map(([pid, q]) => ({ product_id: pid, qty: q, price_cents: priceOf(pid) })),
         delivery_date: F.delivery, shipping_cents: t.ship, discount_cents: t.disc, notes: F.notes.trim(),
-        raw_message: F.raw.trim() || null, paid: !!F.pay, payment_method: F.pay || null,
+        raw_message: F.raw.trim() || null, paid: !!F.pay, payment_method: F.pay || null, source: F.source,
       };
       const r = await act(() => F.id ? api("PUT", "/api/orders/" + F.id, body) : api("POST", "/api/orders", body));
       if (!r) return;
       F.saved = r.order;
+      if (F.waIds.length) {
+        await act(() => api("POST", "/api/whatsapp/resolve", { ids: F.waIds, status: "pedido", order_id: r.order.id }));
+        refreshBadge();
+      }
       showSaved(r.order, !!F.id);
     }
     function showSaved(o, wasEdit) {
@@ -562,7 +571,11 @@
           el("p", { class: "muted small", text: "Mándale este mensaje a tu cliente." }),
           ticket,
           el("div", { class: "row" },
-            el("button", { class: "btn primary", type: "button", text: "Copiar mensaje", onclick: () => copyText(msg, ticket) }),
+            F.waPhone && S.waStatus && S.waStatus.sending ? el("button", { class: "btn primary", type: "button", text: "Enviar por WhatsApp", onclick: async ev => {
+              const b = ev.currentTarget; b.disabled = true;
+              if (await act(() => api("POST", "/api/whatsapp/send", { phone: F.waPhone, text: msg }), "Enviado por WhatsApp")) b.textContent = "Enviado"; else b.disabled = false;
+            } }) : null,
+            el("button", { class: "btn" + (F.waPhone && S.waStatus && S.waStatus.sending ? "" : " primary"), type: "button", text: "Copiar mensaje", onclick: () => copyText(msg, ticket) }),
             el("a", { class: "btn", href: waUrl(o.customer.phone, msg), target: "_blank", rel: "noopener", text: "Abrir WhatsApp" }),
             el("button", { class: "btn ghost", type: "button", text: "Nuevo pedido", onclick: () => { S.form = emptyForm(); if (location.hash === "#/nuevo") rerender(); else location.hash = "#/nuevo"; } }),
             el("a", { class: "btn ghost", href: "#/pedidos", text: "Ver pedidos" })),
@@ -596,6 +609,9 @@
   const norm = s => String(s || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9ñ\s]/g, " ").replace(/\s+/g, " ").trim();
   const stem = w => (w.length > 4 ? w.replace(/(es|s)$/, "") : w);
   const DATEWORDS = new Set(["hoy", "manana", "pasado", "sabado", "domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "entrega", "recoger", "recojo", "semana", "gracias", "porfavor"].map(stem));
+  // Saludos y plática que no son productos: no se reportan como "no reconocido".
+  const CHAT = new Set(["buenas", "buenos", "tardes", "dias", "noches", "gracias", "saludos", "que", "tal", "como", "estas", "oye", "disculpa", "perdon", "ok", "va", "sale", "si", "no", "bueno"].map(stem));
+  const isChat = w => DATEWORDS.has(w) || CHAT.has(w) || /^hol+a+s?$/.test(w) || /^j[aeiou]j/.test(w);
   const tokens = s => norm(s).split(" ").filter(w => w && !STOP.has(w)).map(stem);
   function parseMessage(text, menu) {
     const items = {}, unknown = [];
@@ -615,7 +631,7 @@
         if (s > score) { score = s; best = p; }
       }
       if (best && score >= 0.34) items[best.id] = (items[best.id] || 0) + qty;
-      else if (tk.some(w => w.length > 3 && !DATEWORDS.has(w))) unknown.push(ch);
+      else if (tk.some(w => w.length > 3 && !isChat(w))) unknown.push(ch);
     }
     let date = null; const t = norm(text); const base = today();
     if (/\bpasado manana\b/.test(t)) date = addDays(base, 2);
@@ -623,6 +639,86 @@
     else if (/\bhoy\b/.test(t)) date = base;
     else DAYS.forEach((d, i) => { if (!date && new RegExp("\\b" + norm(d) + "\\b").test(t)) { let x = addDays(base, 1); while (x.getDay() !== i) x = addDays(x, 1); date = x; } });
     return { items, date: date && ymd(date), unknown };
+  }
+
+
+  // ================= BANDEJA DE WHATSAPP =================
+  function setBadge(n) { document.querySelectorAll('[data-badge="wa"]').forEach(b => { b.hidden = !n; b.textContent = n > 99 ? "99+" : String(n); }); }
+  async function refreshBadge() {
+    try { const r = await api("GET", "/api/whatsapp/inbox"); S.waStatus = r.status; setBadge(r.threads.reduce((a, t) => a + t.messages.length, 0)); } catch {}
+  }
+  setInterval(() => { if (S.me && document.visibilityState === "visible") refreshBadge(); }, 60_000);
+
+  async function viewBandeja() {
+    const [{ threads, status }] = await Promise.all([api("GET", "/api/whatsapp/inbox"), loadProducts(), loadSettings()]);
+    S.waStatus = status;
+    setBadge(threads.reduce((a, t) => a + t.messages.length, 0));
+    const active = S.products.filter(p => p.active);
+    const byRetail = id => S.products.find(p => p.wa_retailer_id === id) || S.products.find(p => p.id === id);
+    const pname = pid => (S.products.find(p => p.id === pid) || { name: pid }).name;
+
+    // Solo los carritos del catálogo traen productos exactos. El texto libre no se interpreta: se lee y se captura a mano.
+    const detect = t => {
+      const qty = {}, prices = {}, unknown = [];
+      const carts = t.messages.filter(m => m.type === "order");
+      for (const m of carts) for (const i of m.items || []) {
+        const p = byRetail(i.retailer_id);
+        if (!p) { unknown.push("producto del catálogo " + i.retailer_id); continue; }
+        qty[p.id] = (qty[p.id] || 0) + i.qty;
+        if (i.price_cents && i.price_cents !== p.price_cents) prices[p.id] = i.price_cents;
+      }
+      return { qty, prices, unknown, cart: carts.length > 0 };
+    };
+
+    const threadCard = t => {
+      const name = t.customer ? t.customer.name : (t.profile_name || "");
+      const d = detect(t);
+      const found = Object.entries(d.qty).map(([pid, q]) => `${q} ${pname(pid)}`).join(" · ");
+      const summary = d.cart ? (found ? `Carrito: ${found}` : "El carrito no trae productos del menú.") : "Mensaje de texto: al crear el pedido, elige los panencios.";
+      const confirm = el("div", { class: "confirm", hidden: true });
+      const ids = t.messages.map(m => m.id);
+      return el("article", { class: "order pend" },
+        el("div", { class: "hd" }, el("span", { class: "who", text: name || "Sin nombre" }), el("span", { class: "small muted mono", text: "+" + t.phone })),
+        t.customer ? el("div", {}, el("span", { class: "pill paid", text: "Cliente registrado" })) : t.profile_name ? el("div", { class: "small muted", text: "Nombre en WhatsApp: " + t.profile_name }) : null,
+        el("div", { class: "msgs" }, t.messages.map(m => el("div", { class: "msg" },
+          el("time", { text: when(m.received_at) }),
+          m.type === "order"
+            ? el("div", {}, el("div", { class: "eyebrow", text: "Carrito del catálogo" }),
+                el("ul", {}, (m.items || []).map(i => { const p = byRetail(i.retailer_id); return el("li", { text: `${i.qty} × ${p ? p.name : i.retailer_id} — ${money(i.qty * i.price_cents)}` }); })),
+                m.body ? el("p", { text: m.body }) : null)
+            : el("p", { class: m.type === "otro" ? "muted" : null, text: m.body })))),
+        el("div", { class: d.cart ? "note small" : "small muted", text: summary }),
+        d.unknown.length ? el("p", { class: "small muted", text: "No reconocí: " + d.unknown.join(", ") }) : null,
+        el("div", { class: "acts" },
+          el("button", { class: "btn sm primary", type: "button", text: "Crear pedido", onclick: () => {
+            S.form = { ...emptyForm(), customer: name, phone: t.phone.replace(/\D/g, "").slice(-10), qty: d.qty, prices: d.prices,
+              raw: t.messages.filter(m => m.body && m.type !== "otro").map(m => m.body).join("\n"),
+              source: "whatsapp", waIds: ids, waPhone: t.phone, note: d.cart ? summary.replace(/\.?$/, ".") + " Elige el día de entrega y guarda." : "" };
+            location.hash = "#/nuevo";
+          } }),
+          el("a", { class: "btn sm", href: "https://wa.me/" + t.phone, target: "_blank", rel: "noopener", text: "Abrir chat" }),
+          el("button", { class: "btn sm ghost", type: "button", text: "Descartar", onclick: () => {
+            confirm.textContent = "";
+            confirm.append(el("span", { class: "small", text: `¿Sacar ${ids.length === 1 ? "este mensaje" : "estos " + ids.length + " mensajes"} de la bandeja sin crear pedido?` }),
+              el("button", { class: "btn sm", type: "button", text: "Sí, descartar", onclick: async () => { if (await act(() => api("POST", "/api/whatsapp/resolve", { ids, status: "descartado" }), "Descartado")) rerender(); } }),
+              el("button", { class: "btn sm ghost", type: "button", text: "Cancelar", onclick: () => (confirm.hidden = true) }));
+            confirm.hidden = false;
+          } })),
+        confirm);
+    };
+
+    const out = [pageHead("Bandeja de WhatsApp")];
+    if (!status.receiving) {
+      out.push(el("div", { class: "card" }, el("h2", { text: "Falta conectar WhatsApp" }),
+        el("p", { text: "Cuando conectes tu número de WhatsApp Business con la plataforma de Meta, aquí van a llegar solos los mensajes y los carritos del catálogo, listos para convertirse en pedido con un toque." }),
+        el("p", { class: "muted small", text: "Los pasos están en docs/whatsapp.md del repositorio." })));
+      return out;
+    }
+    out.push(el("p", { class: "muted", text: "Mensajes que todavía no son pedido. Los pedidos que hacen con el menú de WhatsApp (escribiendo MENÚ) no pasan por aquí: se registran solos en Pedidos." }));
+    if (!status.sending) out.push(el("p", { class: "note small", text: "Recibir ya funciona. Para contestar desde el panel falta configurar el envío (WA_TOKEN y WA_PHONE_NUMBER_ID)." }));
+    if (!threads.length) out.push(el("div", { class: "empty", text: "No hay mensajes pendientes." }));
+    else out.push(el("div", { class: "orders" }, threads.map(threadCard)));
+    return out;
   }
 
   // ================= CLIENTES =================
@@ -679,7 +775,7 @@
 
   // ================= MENÚ =================
   async function viewMenu() {
-    await Promise.all([loadProducts(), loadSettings()]);
+    await Promise.all([loadProducts(), loadSettings(), refreshBadge()]);
     const admin = isAdmin();
     if (!admin) {
       return [pageHead("Menú"), el("div", { class: "card" }, el("div", { class: "tablewrap" }, el("table", {},
@@ -702,7 +798,8 @@
           el("td", { class: "w-price" }, el("input", { type: "number", min: "0", step: "0.01", value: p.cost_cents == null ? "" : p.cost_cents / 100, placeholder: "—", "aria-label": "Costo", onchange: e => patch(p, "cost_cents", toCents(e.target.value)) })),
           el("td", { class: "r" }, margin == null ? el("span", { class: "margin muted", text: "sin costo" }) : el("span", { class: "margin " + (margin < 0.3 ? "low" : "ok"), text: `${Math.round(margin * 100)}% · ${money(p.price_cents - p.cost_cents)}` })),
           el("td", {}, el("label", { class: "row small" }, el("input", { type: "checkbox", checked: p.active, onchange: e => patch(p, "active", e.target.checked) }), "En venta")),
-          el("td", {}, el("input", { type: "text", value: p.aliases.join(", "), placeholder: "otras formas de pedirlo", "aria-label": "Otras formas de pedirlo", onchange: e => patch(p, "aliases", e.target.value.split(",").map(s => s.trim()).filter(Boolean)) }))));
+          el("td", {}, el("input", { type: "text", value: p.aliases.join(", "), placeholder: "otras formas de pedirlo", "aria-label": "Otras formas de pedirlo", onchange: e => patch(p, "aliases", e.target.value.split(",").map(s => s.trim()).filter(Boolean)) })),
+          el("td", { class: "w-price" }, el("input", { type: "text", value: p.wa_retailer_id || "", placeholder: p.id, "aria-label": "ID en el catálogo de WhatsApp", onchange: e => patch(p, "wa_retailer_id", e.target.value.trim()) }))));
       }
     };
     drawRows();
@@ -715,7 +812,7 @@
       pageHead("Menú y costos"),
       el("p", { class: "muted", text: "Los cambios se guardan al salir de cada campo. Los pedidos ya guardados conservan el precio y el costo con que se vendieron. Solo administración ve los costos." }),
       el("div", { class: "card" }, el("div", { class: "tablewrap" }, el("table", {},
-        el("thead", {}, el("tr", {}, ["Panencio", "Sección", "Precio $", "Costo $", "Margen", "", "Cómo lo piden"].map((h, i) => el("th", { class: i === 4 ? "r" : null, text: h })))), body))),
+        el("thead", {}, el("tr", {}, ["Panencio", "Sección", "Precio $", "Costo $", "Margen", "", "Cómo lo piden", "ID catálogo WA"].map((h, i) => el("th", { class: i === 4 ? "r" : null, text: h })))), body))),
       el("div", { class: "grid2" },
         el("div", { class: "card" }, el("h2", { text: "Agregar panencio" }),
           el("div", { class: "row" }, el("div", { class: "field grow" }, el("label", { for: "n-name", text: "Nombre" }), nName), el("div", { class: "field grow" }, el("label", { for: "n-cat", text: "Sección" }), nCat)),
@@ -724,10 +821,31 @@
             if (!nName.value.trim() || !nPrice.value) return toast("Escribe nombre y precio");
             if (await act(() => api("POST", "/api/products", { name: nName.value, category: nCat.value, price_cents: toCents(nPrice.value), cost_cents: toCents(nCost.value), aliases: [], active: true }), "Agregado al menú")) rerender();
           } }))),
+        waMenuCard(),
         el("div", { class: "card" }, el("h2", { text: "Mensaje de pago" }),
           el("p", { class: "muted small", text: "Va al final de cada pedido por cobrar que mandas." }), note,
           el("div", {}, el("button", { class: "btn primary", type: "button", text: "Guardar mensaje", onclick: () => act(() => api("PUT", "/api/settings", { payment_note: note.value }), "Mensaje guardado").then(ok => ok && (S.settings.payment_note = note.value.trim())) })))),
     ];
+  }
+
+  function waMenuCard() {
+    const on = el("input", { type: "checkbox", id: "wa-menu", checked: S.settings.wa_menu === "1" });
+    const current = new Set(String(S.settings.delivery_days ?? "0,1,2,3,4,5,6").split(",").filter(Boolean));
+    const order = [1, 2, 3, 4, 5, 6, 0];
+    const boxes = order.map(d => el("input", { type: "checkbox", id: "dd-" + d, value: String(d), checked: current.has(String(d)) }));
+    return el("div", { class: "card" }, el("h2", { text: "Menú de WhatsApp" }),
+      el("p", { class: "muted small", text: "Cuando alguien escribe MENÚ o PEDIDO, WhatsApp le muestra tus secciones y panencios con botones: elige producto, cantidad y día, y confirma. El pedido aparece solo en Pedidos como Por cobrar. No interpreta texto: solo cuenta lo que el cliente toca." }),
+      S.waStatus && !S.waStatus.sending ? el("p", { class: "note small", text: "Para que funcione falta conectar el envío por WhatsApp (ver docs/whatsapp.md)." }) : null,
+      el("label", { class: "row" }, on, "Contestar con el menú"),
+      el("div", { class: "field" }, el("label", { text: "Días de entrega que se ofrecen" }),
+        el("div", { class: "chips" }, order.map((d, i) => el("label", { class: "chip" }, boxes[i], " " + cap(DAYS[d]).slice(0, 3))))),
+      el("p", { class: "muted small", text: "El cliente ve los próximos días marcados, a partir de mañana (máximo 7)." }),
+      el("div", {}, el("button", { class: "btn primary", type: "button", text: "Guardar", onclick: async () => {
+        const days = boxes.filter(b => b.checked).map(b => Number(b.value));
+        if (await act(() => api("PUT", "/api/settings", { wa_menu: on.checked, delivery_days: days }), "Menú de WhatsApp guardado")) {
+          S.settings.wa_menu = on.checked ? "1" : "0"; S.settings.delivery_days = days.sort().join(",");
+        }
+      } })));
   }
 
   // ================= USUARIOS =================
@@ -785,7 +903,7 @@
     };
     return [pageHead("Actividad"), el("p", { class: "muted", text: "Quién hizo qué, lo más reciente primero." }),
       el("div", { class: "card" }, entries.length ? el("div", { class: "log" }, entries.map(e => el("div", {},
-        el("time", { text: when(e.at) }), el("span", {}, el("b", { text: e.user_name || "Sistema" }), " · ", e.action, describe(e) ? el("span", { class: "muted", text: " — " + describe(e) }) : null)))) : el("div", { class: "empty", text: "Sin actividad todavía." }))];
+        el("time", { text: when(e.at) }), el("span", {}, el("b", { text: e.user_name || (e.detail && e.detail.origen === "whatsapp" ? "Menú de WhatsApp" : "Sistema") }), " · ", e.action, describe(e) ? el("span", { class: "muted", text: " — " + describe(e) }) : null)))) : el("div", { class: "empty", text: "Sin actividad todavía." }))];
   }
 
   // ================= CUENTA / MÁS =================
@@ -815,7 +933,7 @@
     } catch { toast("No se pudo descargar el respaldo"); }
   }
   async function viewMas() {
-    const links = [["menu", "Menú y costos"], ["usuarios", "Usuarios", true], ["actividad", "Actividad", true], ["cuenta", "Mi cuenta"]].filter(l => !l[2] || isAdmin());
+    const links = [["clientes", "Clientes"], ["menu", "Menú y costos"], ["usuarios", "Usuarios", true], ["actividad", "Actividad", true], ["cuenta", "Mi cuenta"]].filter(l => !l[2] || isAdmin());
     return [pageHead("Más"), el("div", { class: "card" }, el("div", { class: "links" }, links.map(([id, label]) => el("a", { href: "#/" + id, text: label })))),
       el("p", { class: "muted small", text: `Sesión de ${S.me.name}.` })];
   }
@@ -825,6 +943,7 @@
     try { S.me = (await api("GET", "/api/me")).user; } catch { return; }
     renderShell();
     loadSettings().catch(() => {});
+    refreshBadge();
     route();
   }
   boot();

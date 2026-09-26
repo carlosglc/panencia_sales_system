@@ -6,12 +6,15 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:http";
 import { pbkdf2Sync, randomBytes, createHmac } from "node:crypto";
 
 const PORT = 8799;
 const BASE = `http://127.0.0.1:${PORT}`;
 const persist = mkdtempSync(join(tmpdir(), "panencia-test-"));
-let server;
+let server, graph;
+const GRAPH_PORT = 8798;
+const sent = []; // lo que el panel le manda a "Meta"
 
 function wrangler(args) {
   const r = spawnSync("npx", ["wrangler", ...args, "--persist-to", persist], { encoding: "utf8" });
@@ -39,11 +42,17 @@ class Client {
 }
 
 before(async () => {
+  // Servidor falso de la Graph API de Meta.
+  graph = createServer((req, res) => {
+    let b = ""; req.on("data", c => (b += c));
+    req.on("end", () => { sent.push({ path: req.url, auth: req.headers.authorization, body: JSON.parse(b || "{}") }); res.setHeader("content-type", "application/json"); res.end('{"messages":[{"id":"out"}]}'); });
+  }).listen(GRAPH_PORT, "127.0.0.1");
   wrangler(["d1", "migrations", "apply", "panencia", "--local"]);
   wrangler(["d1", "execute", "panencia", "--local", "--command",
     userSql("admin@panencia.test", "Admin", "admin", "contraseña-admin") + userSql("ayuda@panencia.test", "Ayudante", "staff", "contraseña-staff")]);
   server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1", "--persist-to", persist,
-    "--var", "WA_VERIFY_TOKEN:verif-123", "--var", "WA_APP_SECRET:secreto-app"], { stdio: "ignore", detached: true });
+    "--var", "WA_VERIFY_TOKEN:verif-123", "--var", "WA_APP_SECRET:secreto-app", "--var", "WA_TOKEN:token-prueba",
+    "--var", "WA_PHONE_NUMBER_ID:123", "--var", `WA_GRAPH_BASE:http://127.0.0.1:${GRAPH_PORT}`], { stdio: "ignore", detached: true });
   for (let i = 0; i < 60; i++) {
     try { await fetch(BASE + "/api/me"); return; } catch { await new Promise(r => setTimeout(r, 500)); }
   }
@@ -51,6 +60,7 @@ before(async () => {
 });
 
 after(() => {
+  graph.close();
   try { process.kill(-server.pid); } catch {}
   rmSync(persist, { recursive: true, force: true });
 });
@@ -186,7 +196,7 @@ test("webhook: guarda texto y carrito, sin duplicar reintentos, y reconoce al cl
   const order = suku.messages.find(m => m.type === "order");
   assert.deepEqual(order.items, [{ retailer_id: "apple-pie", qty: 1, price_cents: 30000 }]);
   assert.equal(r.data.status.receiving, true);
-  assert.equal(r.data.status.sending, false);
+  assert.equal(r.data.status.sending, true);
 });
 
 test("bandeja: el pedido creado desde WhatsApp saca los mensajes de la bandeja", async () => {
@@ -201,9 +211,120 @@ test("bandeja: el pedido creado desde WhatsApp saca los mensajes de la bandeja",
   assert.equal((await admin.req("GET", "/api/whatsapp/inbox")).data.threads.length, 0);
 });
 
-test("enviar por la API sin configurar responde 503", async () => {
-  const r = await admin.req("POST", "/api/whatsapp/send", { phone: "5215512345678", text: "hola" });
-  assert.equal(r.status, 503);
+test("responder por WhatsApp: solo a quien escribió; manda el texto a Meta", async () => {
+  assert.equal((await admin.req("POST", "/api/whatsapp/send", { phone: "5215500000000", text: "hola" })).status, 409);
+  const before = sent.length;
+  const r = await admin.req("POST", "/api/whatsapp/send", { phone: "5215512345678", text: "Tu pedido quedó" });
+  assert.equal(r.status, 200);
+  const last = sent[sent.length - 1];
+  assert.equal(sent.length, before + 1);
+  assert.equal(last.path, "/v23.0/123/messages");
+  assert.equal(last.auth, "Bearer token-prueba");
+  assert.equal(last.body.text.body, "Tu pedido quedó");
+});
+
+// ---------- menú de WhatsApp ----------
+let seq = 0;
+async function waReply(from, id, name = "Cliente Menú") {
+  return postWebhook(waPayload([{ id: "wamid.m" + ++seq, from, timestamp: String(Math.floor(Date.now() / 1000)), type: "interactive", interactive: { type: "list_reply", list_reply: { id, title: id } } }], [{ wa_id: from, profile: { name } }]));
+}
+async function waText(from, body, name = "Cliente Menú") {
+  return postWebhook(waPayload([{ id: "wamid.m" + ++seq, from, timestamp: String(Math.floor(Date.now() / 1000)), type: "text", text: { body } }], [{ wa_id: from, profile: { name } }]));
+}
+async function nextSent(count) {
+  for (let i = 0; i < 50 && sent.length < count; i++) await new Promise(r => setTimeout(r, 100));
+  assert.ok(sent.length >= count, "el menú no contestó");
+  return sent[count - 1].body;
+}
+const rowIds = m => m.interactive.action.sections[0].rows.map(r => r.id);
+const buttonIds = m => m.interactive.action.buttons.map(b => b.reply.id);
+
+test("menú apagado: 'menú' se queda en la Bandeja y no se contesta", async () => {
+  const n = sent.length;
+  await waText("5215533334444", "menu");
+  await new Promise(r => setTimeout(r, 400));
+  assert.equal(sent.length, n);
+  const inbox = await admin.req("GET", "/api/whatsapp/inbox");
+  assert.ok(inbox.data.threads.some(t => t.phone === "5215533334444"));
+  await admin.req("POST", "/api/whatsapp/resolve", { ids: inbox.data.threads.flatMap(t => t.messages.map(m => m.id)), status: "descartado" });
+});
+
+test("menú: de MENÚ a pedido registrado, solo con opciones", async () => {
+  assert.equal((await admin.req("PUT", "/api/settings", { wa_menu: true, delivery_days: [0, 1, 2, 3, 4, 5, 6] })).status, 200);
+  const from = "5215512345678"; // Suku, cliente registrado
+  let n = sent.length;
+  await waText(from, "Menú!");
+  let m = await nextSent(++n);
+  assert.equal(m.type, "interactive");
+  assert.ok(rowIds(m).includes("c:pan"));
+  await waReply(from, "c:pan");
+  m = await nextSent(++n);
+  assert.ok(rowIds(m).includes("p:hogaza-natural"));
+  await waReply(from, "p:hogaza-natural");
+  m = await nextSent(++n);
+  assert.deepEqual(rowIds(m).slice(0, 3), ["q:1", "q:2", "q:3"]);
+  await waReply(from, "q:2");
+  m = await nextSent(++n);
+  assert.deepEqual(buttonIds(m), ["m:otro", "m:listo", "m:cancelar"]);
+  await waReply(from, "m:listo");
+  m = await nextSent(++n);
+  const day = rowIds(m)[0];
+  assert.match(day, /^d:\d{4}-\d{2}-\d{2}$/);
+  await waText(from, "el sábado porfa"); // texto libre en medio: repite el paso, no adivina
+  m = await nextSent(++n);
+  assert.deepEqual(rowIds(m), rowIds(sent[n - 2].body));
+  await waReply(from, day);
+  m = await nextSent(++n);
+  assert.deepEqual(buttonIds(m), ["k:si", "k:no"]);
+  await waReply(from, "k:si");
+  m = await nextSent(++n);
+  assert.equal(m.type, "text");
+  assert.match(m.text.body, /Total: \$170/);
+  assert.match(m.text.body, /Pedido PN-/);
+
+  const orders = (await admin.req("GET", "/api/orders?from=" + day.slice(2) + "&to=" + day.slice(2))).data.orders;
+  const o = orders.find(x => x.source === "whatsapp" && x.total_cents === 17000);
+  assert.ok(o, "no se registró el pedido");
+  assert.equal(o.customer.name, "Suku");
+  assert.deepEqual(o.items.map(i => [i.product_id, i.qty]), [["hogaza-natural", 2]]);
+  const inbox = await admin.req("GET", "/api/whatsapp/inbox");
+  assert.ok(!inbox.data.threads.some(t => t.phone === from), "los mensajes del menú no deben quedar en la Bandeja");
+});
+
+test("menú: plática normal va a la Bandeja; opciones viejas avisan que venció", async () => {
+  let n = sent.length;
+  await waText("5215577778888", "gracias! quedó riquísimo", "Lupita");
+  await new Promise(r => setTimeout(r, 400));
+  assert.equal(sent.length, n);
+  assert.ok((await admin.req("GET", "/api/whatsapp/inbox")).data.threads.some(t => t.phone === "5215577778888"));
+  await waReply("5215577778888", "q:3");
+  const m = await nextSent(++n);
+  assert.match(m.text.body, /venció/);
+});
+
+test("menú: un cliente nuevo queda registrado con su nombre de WhatsApp", async () => {
+  const from = "5215566667777";
+  let n = sent.length;
+  await waText(from, "pedido", "Marisol");
+  await nextSent(++n);
+  for (const id of ["c:postres", "p:apple-pie", "q:1", "m:listo"]) { await waReply(from, id, "Marisol"); await nextSent(++n); }
+  const day = rowIds(sent[n - 1].body)[0];
+  await waReply(from, day, "Marisol"); await nextSent(++n);
+  await waReply(from, "k:si", "Marisol"); await nextSent(++n);
+  const c = (await admin.req("GET", "/api/customers")).data.customers.find(x => x.name === "Marisol");
+  assert.ok(c);
+  assert.equal(c.phone, "5566667777");
+  assert.equal(c.orders, 1);
+});
+
+test("menú: CANCELAR termina la conversación", async () => {
+  const from = "5215512121212";
+  let n = sent.length;
+  await waText(from, "menu");
+  await nextSent(++n);
+  await waText(from, "cancelar");
+  const m = await nextSent(++n);
+  assert.match(m.text.body, /cancelado/);
 });
 
 test("la bandeja pide sesión", async () => {

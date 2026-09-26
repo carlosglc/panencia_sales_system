@@ -6,6 +6,8 @@
 // Secretos (wrangler secret put …): WA_VERIFY_TOKEN, WA_APP_SECRET, WA_TOKEN.
 // Variables (wrangler.jsonc → vars): WA_PHONE_NUMBER_ID, WA_GRAPH_VERSION.
 import { HttpError, json, str } from "./http.js";
+import { sendingConfigured, sendText } from "./wa-api.js";
+import { menuEnabled, handleMessage } from "./wa-menu.js";
 
 const enc = new TextEncoder();
 const MAX_BODY = 1_000_000;
@@ -22,7 +24,7 @@ async function hmacHex(secret, data) {
 export function status(env) {
   return {
     receiving: !!(env.WA_VERIFY_TOKEN && env.WA_APP_SECRET),
-    sending: !!(env.WA_TOKEN && env.WA_PHONE_NUMBER_ID),
+    sending: sendingConfigured(env),
   };
 }
 
@@ -36,7 +38,7 @@ export function verify(env, url) {
 }
 
 // POST: mensajes entrantes.
-export async function receive(env, req) {
+export async function receive(env, req, ctx) {
   if (!env.WA_APP_SECRET) throw new HttpError(503, "WhatsApp no está configurado");
   const raw = new Uint8Array(await req.arrayBuffer());
   if (raw.length > MAX_BODY) throw new HttpError(413, "Demasiado grande");
@@ -48,7 +50,7 @@ export async function receive(env, req) {
   let payload;
   try { payload = JSON.parse(new TextDecoder().decode(raw)); } catch { throw new HttpError(400, "JSON inválido"); }
 
-  const stmts = [];
+  const stmts = [], incoming = [];
   for (const entry of payload.entry || []) {
     for (const change of entry.changes || []) {
       if (change.field !== "messages") continue;
@@ -56,8 +58,14 @@ export async function receive(env, req) {
       const names = new Map((value.contacts || []).map(c => [c.wa_id, c.profile && c.profile.name]));
       for (const m of value.messages || []) {
         if (!m || !m.id || !m.from) continue;
-        let type = "otro", body = null, items = null;
-        if (m.type === "text") {
+        let type = "otro", body = null, items = null, replyId = null;
+        if (m.type === "interactive" && m.interactive) {
+          // El cliente tocó una opción del menú de WhatsApp.
+          const r = m.interactive.list_reply || m.interactive.button_reply || {};
+          type = "respuesta";
+          body = String(r.title || "").slice(0, 200);
+          replyId = String(r.id || "").slice(0, 100) || null;
+        } else if (m.type === "text") {
           type = "text";
           body = String((m.text && m.text.body) || "").slice(0, 4000);
         } else if (m.type === "order" && m.order) {
@@ -69,17 +77,34 @@ export async function receive(env, req) {
             price_cents: Math.round((Number(i.item_price) || 0) * 100),
           })));
         } else {
-          body = `[${String(m.type || "mensaje").slice(0, 30)}]`; // imagen, audio, ubicación…
+          const KIND = { image: "imagen", audio: "audio", video: "video", document: "documento", sticker: "sticker", location: "ubicación", contacts: "contacto", reaction: "reacción" };
+          body = `[${KIND[m.type] || "mensaje"}]`; // p. ej. la foto del comprobante de pago
         }
         const at = Number(m.timestamp) ? Number(m.timestamp) * 1000 : Date.now();
+        incoming.push({ id: String(m.id).slice(0, 200), from: String(m.from).slice(0, 30), profile_name: names.get(m.from) || null, type: type === "respuesta" ? "interactive" : type, text: body, reply_id: replyId });
         stmts.push(env.DB.prepare(
           "INSERT OR IGNORE INTO wa_messages (id, from_phone, profile_name, type, body, items, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
         ).bind(String(m.id).slice(0, 200), String(m.from).slice(0, 30), (names.get(m.from) || "").slice(0, 100) || null, type, body, items, at));
       }
     }
   }
-  if (stmts.length) await env.DB.batch(stmts);
-  // Meta solo necesita un 200 rápido; si no lo recibe, reintenta.
+  if (!stmts.length) return json({ ok: true });
+  const results = await env.DB.batch(stmts);
+  // Solo los mensajes nuevos (Meta reintenta los que no confirmamos a tiempo).
+  const fresh = incoming.filter((_, i) => results[i] && results[i].meta && results[i].meta.changes > 0);
+  if (fresh.length && (await menuEnabled(env))) {
+    const work = (async () => {
+      for (const msg of fresh) {
+        try {
+          if (await handleMessage(env, msg)) await env.DB.prepare("UPDATE wa_messages SET status = 'menu' WHERE id = ? AND status = 'nuevo'").bind(msg.id).run();
+        } catch (e) {
+          console.error("Menú de WhatsApp", e && e.stack || e); // el mensaje se queda en la Bandeja para atenderlo a mano
+        }
+      }
+    })();
+    // Meta solo necesita un 200 rápido; el menú contesta después.
+    if (ctx && ctx.waitUntil) ctx.waitUntil(work); else await work;
+  }
   return json({ ok: true });
 }
 
@@ -134,19 +159,7 @@ export async function send(env, body) {
   if (!last || !last.at) throw new HttpError(409, "Ese número no te ha escrito por WhatsApp. Usa el botón de WhatsApp normal.");
   if (Date.now() - last.at > WINDOW_MS) throw new HttpError(409, "Pasaron más de 24 horas desde su último mensaje. Usa el botón de WhatsApp normal.");
 
-  const to = last.from_phone;
-  const call = async recipient => fetch(`https://graph.facebook.com/${env.WA_GRAPH_VERSION || "v23.0"}/${env.WA_PHONE_NUMBER_ID}/messages`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.WA_TOKEN}`, "content-type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to: recipient, type: "text", text: { body: text, preview_url: false } }),
-  });
-  let res = await call(to);
-  // Números de celular de México llegan como 521XXXXXXXXXX; en algunas cuentas el envío solo acepta 52XXXXXXXXXX.
-  if (!res.ok && /^521\d{10}$/.test(to)) res = await call("52" + to.slice(3));
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({}));
-    console.error("WhatsApp send", res.status, JSON.stringify(detail).slice(0, 500));
-    throw new HttpError(502, "WhatsApp no aceptó el mensaje. Usa el botón de WhatsApp normal.");
-  }
+  try { await sendText(env, last.from_phone, text); }
+  catch { throw new HttpError(502, "WhatsApp no aceptó el mensaje. Usa el botón de WhatsApp normal."); }
   return { ok: true };
 }

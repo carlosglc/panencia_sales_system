@@ -15,6 +15,7 @@ y publicar: no viaja al servidor ni al navegador.
 | Panel (frontend) | JavaScript sin framework: una sola página, rutas con `#/…`, el DOM se arma con una función pequeña, `el()`. La gráfica es SVG dibujado a mano. | `public/app.js`, `public/app.css` |
 | Autenticación | Propia, con Web Crypto: contraseñas con PBKDF2 y sesiones en una tabla de D1. | `src/auth.js` |
 | Herramientas | **Wrangler** (dev local, migraciones, deploy) y el **test runner de Node** (`node:test`) para las pruebas. | `package.json`, `test/` |
+| WhatsApp | **WhatsApp Business Platform (Cloud API)** de Meta: webhook firmado para recibir, Graph API para mandar listas y botones. Sin librerías ni IA. | `src/whatsapp.js`, `src/wa-menu.js`, `src/wa-api.js` |
 | Tipografías | Google Fonts: Rokkitt, Courier Prime y Atkinson Hyperlegible. | `public/index.html` |
 
 No hay paso de compilación propio. Al publicar, Wrangler empaqueta `src/` con esbuild de forma interna y sube `public/`
@@ -46,7 +47,7 @@ sistema con login y base de datos, se eligió Cloudflare porque tu sitio `prohib
 gratis alcanza de sobra, y Workers + D1 dan servidor y base de datos sin administrar máquinas. Se mantuvo sin framework
 por tres razones:
 
-- **Tamaño.** Son unas 10 pantallas y 25 rutas de API. Todo el sistema cabe en unas 2 000 líneas que se leen de corrido.
+- **Tamaño.** Son unas 11 pantallas y 30 rutas de API. Todo el sistema cabe en unas 2 500 líneas que se leen de corrido.
 - **Cero dependencias en producción.** No hay paquetes que actualizar ni vulnerabilidades heredadas; nada se rompe
   porque una librería cambió de versión.
 - **Sin build.** Lo que está en el repo es exactamente lo que corre. Se puede editar `app.js` y publicar.

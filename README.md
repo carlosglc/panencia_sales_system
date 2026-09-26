@@ -12,6 +12,7 @@ backend es `src/`, el panel es `public/`.
 - [API](docs/api.md): todas las rutas, permisos y formato de los datos.
 - [Base de datos](docs/base-de-datos.md): tablas, convenciones y cómo cambiar el esquema.
 - [Operación](docs/operacion.md): publicar cambios, personas, respaldos, errores y problemas comunes.
+- [WhatsApp](docs/whatsapp.md): menú de pedidos con opciones fijas, Bandeja y cómo conectarlo con Meta.
 
 ## Qué hace
 
@@ -20,8 +21,9 @@ backend es `src/`, el panel es `public/`.
 | **Resumen** | Vendido, cobrado, por cobrar y ganancia de la semana; gráfica de las últimas 12 semanas; lista de horneado por día de entrega; qué deja cada panencio. |
 | **Pedidos** | Pedidos por semana de entrega. Cobrado (transferencia/efectivo), entregado, mensaje para WhatsApp, editar, borrar. Filtro "Todo lo que me deben". |
 | **Nuevo pedido** | Pegas el mensaje del cliente y se convierte en pedido. Precio especial por pedido (toca el precio). Envío, descuento, pago, notas. Al guardar arma el mensaje para WhatsApp. |
+| **Bandeja** | Mensajes de WhatsApp que todavía no son pedido. Los carritos del catálogo se vuelven pedido con un toque; el texto se lee y se captura a mano. |
 | **Clientes** | Se crean solos con los pedidos. Cuánto ha gastado cada quien, cuánto debe, su historial. |
-| **Menú y costos** | Precios, costos, margen, qué está en venta, cómo lo piden, y el mensaje de pago. |
+| **Menú y costos** | Precios, costos, margen, qué está en venta, cómo lo piden, el mensaje de pago y el menú de WhatsApp (encenderlo y días de entrega). |
 | **Usuarios** | Agregar personas, cambiar rol, desactivar, restablecer contraseña. |
 | **Actividad** | Bitácora: quién creó, cobró, editó o borró qué. |
 | **Mi cuenta** | Cambiar contraseña, descargar respaldo (JSON), cerrar sesión. |
@@ -82,6 +84,10 @@ src/index.js      entrada del Worker: /api/* a la API, lo demás al panel
 src/api.js        rutas: sesión, menú, pedidos, clientes, reportes, ajustes, usuarios, bitácora, respaldo
 src/auth.js       contraseñas, sesiones, bloqueo por intentos, verificación de origen
 src/http.js       respuestas y validación
+src/orders.js     leer, validar y crear pedidos (lo usan el panel y el menú de WhatsApp)
+src/whatsapp.js   webhook de Meta, Bandeja y respuestas
+src/wa-menu.js    menú de WhatsApp: pasos fijos de sección a confirmación
+src/wa-api.js     envío de mensajes, listas y botones por la Graph API
 migrations/       esquema D1 y menú inicial (precios de venta, sin costos)
 public/           panel (index.html, app.js, app.css, _headers)
 scripts/          crear-usuario.mjs; standalone.py genera la versión de la página vieja para otro sitio
