@@ -1,5 +1,6 @@
 import { HttpError, json, readJson, str, cents, int, date, oneOf } from "./http.js";
 import { currentUser, login, destroySession, checkOrigin, hashPassword, verifyPassword, validatePassword } from "./auth.js";
+import * as wa from "./whatsapp.js";
 
 const CATEGORIES = ["pan", "postres", "laminados", "temporada"];
 const METHODS = ["transferencia", "efectivo"];
@@ -34,7 +35,7 @@ function todayMx() {
 function productOut(p, admin) {
   const out = {
     id: p.id, name: p.name, category: p.category, price_cents: p.price_cents, unit: p.unit,
-    aliases: JSON.parse(p.aliases || "[]"), active: !!p.active, sort: p.sort,
+    aliases: JSON.parse(p.aliases || "[]"), active: !!p.active, sort: p.sort, wa_retailer_id: p.wa_retailer_id || null,
   };
   if (admin) out.cost_cents = p.cost_cents;
   return out;
@@ -127,6 +128,7 @@ async function buildOrder(env, body, previous) {
     raw_message: str(body.raw_message, { max: 4000, field: "el mensaje" }) || null,
     paid,
     payment_method: paid ? oneOf(body.payment_method, METHODS, { field: "la forma de pago" }) : null,
+    source: body.source === "whatsapp" ? "whatsapp" : "panel",
   };
 }
 
@@ -166,10 +168,10 @@ function summarize(orders, admin) {
 
 // ---------- router ----------
 const routes = [];
-const route = (method, pattern, handler, { auth = true } = {}) => {
+const route = (method, pattern, handler, { auth = true, origin = true } = {}) => {
   const keys = [];
   const re = new RegExp("^" + pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return "([^/]+)"; }) + "$");
-  routes.push({ method, re, keys, handler, auth });
+  routes.push({ method, re, keys, handler, auth, origin });
 };
 
 // --- sesión ---
@@ -222,6 +224,7 @@ function productFields(body, partial) {
   }
   if (!partial || "active" in body) f.active = body.active === false ? 0 : 1;
   if ("sort" in body) f.sort = int(body.sort, { min: 0, max: 9999, field: "el orden" });
+  if ("wa_retailer_id" in body) f.wa_retailer_id = str(body.wa_retailer_id, { max: 100, field: "el id del catálogo" }) || null;
   return f;
 }
 
@@ -271,9 +274,9 @@ route("POST", "/api/orders", async ({ env, req, user }) => {
   const r = await env.DB.prepare(
     `INSERT INTO orders (code, customer_id, delivery_date, subtotal_cents, shipping_cents, discount_cents, total_cents, notes, raw_message,
                          paid, payment_method, paid_at, source, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'panel', ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(code, customerId, o.delivery_date, o.subtotal, o.shipping, o.discount, o.total, o.notes, o.raw_message,
-    o.paid ? 1 : 0, o.payment_method, o.paid ? t : null, user.id, t, t).run();
+    o.paid ? 1 : 0, o.payment_method, o.paid ? t : null, o.source, user.id, t, t).run();
   const id = r.meta.last_row_id;
   await saveItems(env, id, o.items);
   await audit(env, user, "pedido creado", "order", id, { code, cliente: o.customerName, total: o.total });
@@ -511,6 +514,26 @@ route("GET", "/api/export", async ({ env, user }) => {
   return json(out, 200, { "content-disposition": `attachment; filename="panencia-respaldo-${todayMx()}.json"` });
 });
 
+// --- WhatsApp ---
+// Meta llama al webhook sin sesión ni Origin; la firma HMAC (WA_APP_SECRET) es la autenticación.
+route("GET", "/api/whatsapp/webhook", async ({ env, url }) => wa.verify(env, url), { auth: false, origin: false });
+route("POST", "/api/whatsapp/webhook", async ({ env, req }) => wa.receive(env, req), { auth: false, origin: false });
+
+route("GET", "/api/whatsapp/inbox", async ({ env }) => wa.inbox(env));
+
+route("POST", "/api/whatsapp/resolve", async ({ env, req, user }) => {
+  const r = await wa.resolve(env, await readJson(req));
+  await audit(env, user, r.status === "pedido" ? "mensajes de WhatsApp a pedido" : "mensajes de WhatsApp descartados", "whatsapp", null, r);
+  return json({ ok: true });
+});
+
+route("POST", "/api/whatsapp/send", async ({ env, req, user }) => {
+  const body = await readJson(req);
+  await wa.send(env, body);
+  await audit(env, user, "mensaje de WhatsApp enviado", "whatsapp", null, { to: String(body.phone || "").slice(-4) });
+  return json({ ok: true });
+});
+
 // ---------- entrada ----------
 export async function handleApi(req, env, url) {
   const match = routes.find(r => r.method === req.method && r.re.test(url.pathname));
@@ -518,7 +541,7 @@ export async function handleApi(req, env, url) {
     const exists = routes.some(r => r.re.test(url.pathname));
     throw new HttpError(exists ? 405 : 404, exists ? "Método no permitido" : "No existe");
   }
-  checkOrigin(req, url);
+  if (match.origin) checkOrigin(req, url);
   const m = url.pathname.match(match.re);
   const params = Object.fromEntries(match.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
   let user = null;

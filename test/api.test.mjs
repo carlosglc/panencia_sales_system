@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pbkdf2Sync, randomBytes } from "node:crypto";
+import { pbkdf2Sync, randomBytes, createHmac } from "node:crypto";
 
 const PORT = 8799;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -42,7 +42,8 @@ before(async () => {
   wrangler(["d1", "migrations", "apply", "panencia", "--local"]);
   wrangler(["d1", "execute", "panencia", "--local", "--command",
     userSql("admin@panencia.test", "Admin", "admin", "contraseña-admin") + userSql("ayuda@panencia.test", "Ayudante", "staff", "contraseña-staff")]);
-  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1", "--persist-to", persist], { stdio: "ignore", detached: true });
+  server = spawn("npx", ["wrangler", "dev", "--port", String(PORT), "--ip", "127.0.0.1", "--persist-to", persist,
+    "--var", "WA_VERIFY_TOKEN:verif-123", "--var", "WA_APP_SECRET:secreto-app"], { stdio: "ignore", detached: true });
   for (let i = 0; i < 60; i++) {
     try { await fetch(BASE + "/api/me"); return; } catch { await new Promise(r => setTimeout(r, 500)); }
   }
@@ -142,6 +143,71 @@ test("clientes acumulan pedidos y saldo", async () => {
   assert.equal(suku.orders, 1);
   assert.equal(suku.owed_cents, 0);
   assert.equal(suku.phone, "5512345678");
+});
+
+// ---------- WhatsApp ----------
+function waPayload(messages, contacts) {
+  return JSON.stringify({ object: "whatsapp_business_account", entry: [{ id: "1", changes: [{ field: "messages", value: { messaging_product: "whatsapp", contacts, messages } }] }] });
+}
+async function postWebhook(body, secret = "secreto-app") {
+  const sig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+  return fetch(BASE + "/api/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json", "x-hub-signature-256": sig }, body });
+}
+const ts = String(Math.floor(Date.now() / 1000));
+const waMsgs = waPayload([
+  { id: "wamid.A", from: "5215512345678", timestamp: ts, type: "text", text: { body: "hola! me apartas 2 hogazas de hierbas para el sábado?" } },
+  { id: "wamid.B", from: "5215512345678", timestamp: ts, type: "order", order: { catalog_id: "c1", text: "gracias", product_items: [{ product_retailer_id: "apple-pie", quantity: "1", item_price: 300, currency: "MXN" }] } },
+  { id: "wamid.C", from: "5215599990000", timestamp: ts, type: "image", image: { id: "img" } },
+], [{ wa_id: "5215512345678", profile: { name: "Suku WA" } }, { wa_id: "5215599990000", profile: { name: "Desconocida" } }]);
+
+test("webhook: Meta verifica la URL solo con el token correcto", async () => {
+  const ok = await fetch(BASE + "/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=verif-123&hub.challenge=42");
+  assert.equal(ok.status, 200);
+  assert.equal(await ok.text(), "42");
+  const bad = await fetch(BASE + "/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=otro&hub.challenge=42");
+  assert.equal(bad.status, 403);
+});
+
+test("webhook: rechaza mensajes sin firma válida", async () => {
+  assert.equal((await postWebhook(waMsgs, "secreto-falso")).status, 401);
+  const noSig = await fetch(BASE + "/api/whatsapp/webhook", { method: "POST", headers: { "content-type": "application/json" }, body: waMsgs });
+  assert.equal(noSig.status, 401);
+  assert.equal((await admin.req("GET", "/api/whatsapp/inbox")).data.threads.length, 0);
+});
+
+test("webhook: guarda texto y carrito, sin duplicar reintentos, y reconoce al cliente por teléfono", async () => {
+  assert.equal((await postWebhook(waMsgs)).status, 200);
+  assert.equal((await postWebhook(waMsgs)).status, 200); // Meta reintenta
+  const r = await admin.req("GET", "/api/whatsapp/inbox");
+  assert.equal(r.data.threads.length, 2);
+  const suku = r.data.threads.find(t => t.phone === "5215512345678");
+  assert.equal(suku.customer.name, "Suku");
+  assert.equal(suku.messages.length, 2);
+  const order = suku.messages.find(m => m.type === "order");
+  assert.deepEqual(order.items, [{ retailer_id: "apple-pie", qty: 1, price_cents: 30000 }]);
+  assert.equal(r.data.status.receiving, true);
+  assert.equal(r.data.status.sending, false);
+});
+
+test("bandeja: el pedido creado desde WhatsApp saca los mensajes de la bandeja", async () => {
+  const created = await admin.req("POST", "/api/orders", {
+    customer: { name: "Suku", phone: "5512345678" }, source: "whatsapp", delivery_date: "2026-10-03",
+    items: [{ product_id: "hogaza-hierbas", qty: 2 }, { product_id: "apple-pie", qty: 1 }],
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.order.source, "whatsapp");
+  assert.equal((await admin.req("POST", "/api/whatsapp/resolve", { ids: ["wamid.A", "wamid.B"], status: "pedido", order_id: created.data.order.id })).status, 200);
+  assert.equal((await admin.req("POST", "/api/whatsapp/resolve", { ids: ["wamid.C"], status: "descartado" })).status, 200);
+  assert.equal((await admin.req("GET", "/api/whatsapp/inbox")).data.threads.length, 0);
+});
+
+test("enviar por la API sin configurar responde 503", async () => {
+  const r = await admin.req("POST", "/api/whatsapp/send", { phone: "5215512345678", text: "hola" });
+  assert.equal(r.status, 503);
+});
+
+test("la bandeja pide sesión", async () => {
+  assert.equal((await new Client().req("GET", "/api/whatsapp/inbox")).status, 401);
 });
 
 test("usuarios: solo admin los gestiona; desactivar corta la sesión", async () => {
