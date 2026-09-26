@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+.dev.vars
+# Datos del negocio (costos, clientes): nunca al repo
+private/
