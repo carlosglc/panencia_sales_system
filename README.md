@@ -6,6 +6,13 @@ y costos y márgenes por producto. Tiene usuarios con contraseña y dos roles.
 Corre en **Cloudflare Workers** con base de datos **D1** (SQLite). Sin frameworks ni build: el
 backend es `src/`, el panel es `public/`.
 
+## Documentación
+
+- [Stack y decisiones](docs/stack.md): qué tecnologías usa, por qué no hay framework y cuándo convendría uno.
+- [API](docs/api.md): todas las rutas, permisos y formato de los datos.
+- [Base de datos](docs/base-de-datos.md): tablas, convenciones y cómo cambiar el esquema.
+- [Operación](docs/operacion.md): publicar cambios, personas, respaldos, errores y problemas comunes.
+
 ## Qué hace
 
 | Sección | Para qué |
@@ -80,6 +87,7 @@ public/           panel (index.html, app.js, app.css, _headers)
 scripts/          crear-usuario.mjs; standalone.py genera la versión de la página vieja para otro sitio
 test/             pruebas de la API
 app/pedidos.html  primera versión (Artifact de Claude); queda como referencia
+docs/             documentación
 ```
 
 El dinero se guarda en centavos. Cada pedido guarda copia del nombre, precio y costo de cada producto, así que

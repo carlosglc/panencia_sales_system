@@ -1,4 +1,6 @@
-# Datos de la página de pedidos
+# Prototipo: la página de pedidos como Artifact
+
+> Esta fue la primera versión (`app/pedidos.html`). El sistema actual usa D1; ver [base-de-datos.md](base-de-datos.md).
 
 Base de datos del Artifact `https://claude.ai/artifact/2Zx15uqfU1pAgLk9eht1QX` (capabilities `db` y `sample`).
 Claude la lee y escribe con la herramienta `ArtifactData` usando esa URL.
